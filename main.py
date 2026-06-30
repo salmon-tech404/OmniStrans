@@ -142,6 +142,16 @@ TARGET_LANG = "Tiếng Việt (Vietnamese)"
 DEEPSEEK_API_KEY = ""
 GEMINI_API_KEY = ""
 CURRENT_CONTEXT_PROMPT = ""
+WS_STT_CLIENT = None
+
+SPEAKER_COLORS = [
+    "#FF5733", # Cam đỏ (Speaker 1)
+    "#50fa7b", # Xanh lá (Speaker 2)
+    "#8be9fd", # Xanh ngọc (Speaker 3)
+    "#f1fa8c", # Vàng chanh (Speaker 4)
+    "#ff79c6", # Hồng phấn (Speaker 5)
+    "#bd93f9", # Tím (Speaker 6)
+]
 
 # Giao diện & Chủ đề cấu hình mặc định
 THEME_MODE = "dark"
@@ -149,6 +159,16 @@ FONT_FAMILY_SRC = "'Segoe UI', sans-serif"
 FONT_FAMILY_TGT = "'Segoe UI', sans-serif"
 FONT_SIZE_SRC = 15
 FONT_SIZE_TGT = 17
+
+def format_text_with_speaker(text):
+    import re
+    m = re.match(r"^\[Speaker (\d+)\]\s*(.*)$", text)
+    if m:
+        spk_num = int(m.group(1))
+        content = m.group(2)
+        color = SPEAKER_COLORS[(spk_num - 1) % len(SPEAKER_COLORS)]
+        return f"<span style='color: {color}; font-weight: bold;'>[Người nói {spk_num}]</span> {content}"
+    return text
 
 def get_clean_lang_name(full_name: str) -> str:
     if "Tự động" in full_name:
@@ -933,12 +953,33 @@ def translate_text(text: str) -> str:
         except Exception as e:
             print(f"[Gemini Web Translation Failed, falling back to Google] {e}")
             
-    # Fallback to GoogleTranslator
+    # Fallback to GoogleTranslator với Timeout ngắn (2.5 giây) để tránh treo/lag
     try:
         if translator:
-            return translator.translate(text)
+            import socket
+            orig_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(2.5)
+            try:
+                res = translator.translate(text)
+                if res and "Error 500" not in res and "Server Error" not in res:
+                    return res
+            finally:
+                socket.setdefaulttimeout(orig_timeout)
     except Exception as e:
         print(f"[Google Translation Failed] {e}")
+
+    # Fallback dự phòng thứ hai: MyMemoryTranslator (Miễn phí, ổn định, khác máy chủ Google)
+    try:
+        from deep_translator import MyMemoryTranslator
+        # Lấy mã ngôn ngữ đích (ví dụ: 'vi')
+        tgt_lang_code = LANGUAGES.get(TARGET_LANG, {}).get("google", "vi")
+        mymemory_translator = MyMemoryTranslator(source='auto', target=tgt_lang_code)
+        res = mymemory_translator.translate(text)
+        if res and "Error" not in res:
+            return res
+    except Exception as e:
+        print(f"[MyMemory Translation Failed] {e}")
+
     return text
 
 # ===============================
@@ -1024,15 +1065,154 @@ transcriber = AudioTranscriber(
 )
 
 # ===============================
+# WEBSOCKET STT CLIENT (CABIN STREAMING)
+# ===============================
+class WebSocketSTTClient:
+    def __init__(self, api_url, src_lang, subtitle_queue):
+        self.api_url = api_url
+        self.src_lang = src_lang
+        self.subtitle_queue = subtitle_queue
+        
+        # Chuyển đổi http/https sang ws/wss
+        self.ws_uri = self.api_url.replace("https://", "wss://").replace("http://", "ws://")
+        if not self.ws_uri.endswith("/ws"):
+            self.ws_uri = self.ws_uri.rstrip("/") + "/ws"
+            
+        self.loop = None
+        self.ws = None
+        self.thread = None
+        self.running = False
+        self.audio_send_queue = None
+        self.last_interim_trans_time = 0
+        self.last_vi_draft = "..."
+
+    def start(self):
+        import threading
+        self.running = True
+        self.thread = threading.Thread(target=self._run_loop, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        import asyncio
+        self.running = False
+        if self.loop and self.ws:
+            asyncio.run_coroutine_threadsafe(self.close_connection(), self.loop)
+
+    def send_audio(self, numpy_chunk):
+        import asyncio
+        if self.loop and self.running and self.audio_send_queue:
+            # Convert float32 [-1.0, 1.0] sang 16-bit PCM bytes
+            scaled = np.int16(np.clip(numpy_chunk, -1.0, 1.0) * 32767)
+            audio_bytes = scaled.tobytes()
+            asyncio.run_coroutine_threadsafe(self.audio_send_queue.put(audio_bytes), self.loop)
+
+    def trigger_finalize(self):
+        import asyncio
+        if self.loop and self.running and self.audio_send_queue:
+            asyncio.run_coroutine_threadsafe(self.audio_send_queue.put("finalize"), self.loop)
+
+    def _run_loop(self):
+        import asyncio
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.audio_send_queue = asyncio.Queue()
+        self.loop.run_until_complete(self.main_ws_loop())
+
+    async def close_connection(self):
+        if self.ws:
+            await self.ws.close()
+
+    async def main_ws_loop(self):
+        import asyncio
+        import json
+        import websockets
+        
+        whisper_lang = LANGUAGES.get(self.src_lang, {}).get("whisper", None)
+        
+        while self.running:
+            try:
+                print(f"[WS Client] Connecting to {self.ws_uri}...")
+                async with websockets.connect(self.ws_uri, open_timeout=5, ping_interval=None, ping_timeout=None) as ws:
+                    self.ws = ws
+                    print("[WS Client] Connected successfully!")
+                    
+                    # 1. Gửi cấu hình ngôn ngữ đầu tiên
+                    await ws.send(json.dumps({"language": whisper_lang}))
+                    
+                    # 2. Tạo tác vụ lắng nghe phản hồi chép lời từ Colab
+                    async def receive_loop():
+                        import threading
+                        try:
+                            async for message in ws:
+                                data = json.loads(message)
+                                msg_type = data.get("type")
+                                text = data.get("text", "").strip()
+                                if msg_type == "interim":
+                                    if text:
+                                        # Hạn chế tần suất dịch nhanh bằng cách so sánh timestamp
+                                        import time
+                                        now = time.time()
+                                        # Chỉ chạy dịch nháp tối đa 1 lần mỗi 1.5 giây
+                                        if now - self.last_interim_trans_time >= 1.5:
+                                            self.last_interim_trans_time = now
+                                            
+                                            def run_interim_trans(t):
+                                                try:
+                                                    from deep_translator import GoogleTranslator
+                                                    # Dịch nháp siêu tốc bằng Google (không block, <80ms)
+                                                    vi_d = GoogleTranslator(source='auto', target='vi').translate(t)
+                                                except Exception:
+                                                    vi_d = self.last_vi_draft
+                                                self.last_vi_draft = vi_d
+                                                self.subtitle_queue.put(f"[INTERIM]\n{t}\n{vi_d}")
+                                            
+                                            threading.Thread(target=run_interim_trans, args=(text,), daemon=True).start()
+                                        else:
+                                            # Nếu chưa đủ 1.5s, chỉ cập nhật chữ gốc tiếng Nhật và GIỮ NGUYÊN bản dịch cũ (không chớp tắt)
+                                            self.subtitle_queue.put(f"[INTERIM]\n{text}\n{self.last_vi_draft}")
+                                         
+                                elif msg_type == "final":
+                                    if text:
+                                        speaker = data.get("speaker", "Speaker 1")
+                                        # Reset bản dịch nháp lưu trữ cho câu mới
+                                        self.last_vi_draft = "..."
+                                        # Chạy dịch chốt nền chất lượng cao
+                                        def run_final_trans(t, spk):
+                                            vi_f = translate_text(t)
+                                            self.subtitle_queue.put(f"[{spk}] {t}\n[{spk}] {vi_f}")
+                                            
+                                        threading.Thread(target=run_final_trans, args=(text, speaker), daemon=True).start()
+                        except Exception as e:
+                            print(f"[WS Client Receiver Error] {e}")
+                            
+                    receiver_task = asyncio.create_task(receive_loop())
+                    
+                    # 3. Gửi liên tục âm thanh hoặc lệnh từ hàng đợi
+                    while self.running:
+                        item = await self.audio_send_queue.get()
+                        if item == "finalize":
+                            await ws.send(json.dumps({"type": "finalize"}))
+                        else:
+                            await ws.send(item)
+                            
+                    receiver_task.cancel()
+                    
+            except Exception as e:
+                print(f"[WS Client Connection Failed/Closed] {e}")
+                self.subtitle_queue.put(f"[SYSTEM]\nSERVER_ERROR:Mất kết nối với server WebSocket ({e})")
+                await asyncio.sleep(3) # Đợi 3 giây rồi tự động kết nối lại
+
+# ===============================
 # SPEECH RECOGNITION WORKER
 # ===============================
 
 def speech_worker():
-    global model
+    global model, WS_STT_CLIENT
     buffer = []
     
     # Các biến trạng thái để nhận diện khoảng lặng ngắt câu kiểu Phiên dịch viên
     is_speaking = False
+    streaming_active = False
     silence_samples = 0
     
     # Cấu hình ngưỡng ngắt câu thông minh kiểu Phiên dịch viên (Interpretation Mode)
@@ -1067,9 +1247,37 @@ def speech_worker():
                 buffer.pop(0)
                 total_samples = sum(len(x) for x in buffer)
 
+        # --- CHẾ ĐỘ ONLINE (STREAMING QUA WEBSOCKET) ---
+        if WHISPER_MODE == "online":
+            if WS_STT_CLIENT:
+                # Nếu bắt đầu nói mà chưa kích hoạt stream, gửi pre-roll dồn dập
+                if is_speaking and not streaming_active:
+                    streaming_active = True
+                    for old_chunk in buffer:
+                        WS_STT_CLIENT.send_audio(old_chunk)
+                
+                # Truyền tiếp âm thanh mượt mà liên tục (không kẽ hở) khi đang stream
+                elif streaming_active:
+                    WS_STT_CLIENT.send_audio(chunk)
+                
+                # Điều kiện gửi lệnh finalize chốt câu
+                is_silence_timeout = silence_samples >= SAMPLE_RATE * SILENCE_TIMEOUT
+                is_max_limit_reached = total_samples >= MAX_SAMPLES
+                
+                if total_samples >= MIN_SAMPLES and (is_silence_timeout or is_max_limit_reached):
+                    if streaming_active:
+                        WS_STT_CLIENT.trigger_finalize()
+                    buffer.clear()
+                    is_speaking = False
+                    streaming_active = False
+                    silence_samples = 0
+                    total_samples = 0
+            continue
+
+        # --- CHẾ ĐỘ OFFLINE / GEMINI (CŨ) ---
         # Thực hiện dịch nháp (Interim) định kỳ
         now = time.time()
-        interim_interval = 1.2 if WHISPER_MODE == "online" else 0.8
+        interim_interval = 0.8
         is_local_ready = (WHISPER_MODE != "local" or model is not None)
         
         if (is_speaking and 
@@ -1111,8 +1319,6 @@ def speech_worker():
                 print(f"[DEBUG] Lỗi khởi động luồng dịch nháp: {e}")
 
         # Điều kiện gửi đi dịch câu hoàn chỉnh:
-        # 1. Đã tích lũy đủ độ dài tối thiểu (MIN_SAMPLES)
-        # 2. Người nói đã im lặng đủ lâu (SILENCE_TIMEOUT) HOẶC đạt giới hạn tối đa (MAX_SAMPLES)
         is_silence_timeout = silence_samples >= SAMPLE_RATE * SILENCE_TIMEOUT
         is_max_limit_reached = total_samples >= MAX_SAMPLES
 
@@ -1159,7 +1365,7 @@ def speech_worker():
                                 subtitle_queue.put(f"{combined_text}\n{vi_text}")
                         continue
 
-                    # For online / gemini:
+                    # For gemini:
                     if original_text and original_text.strip():
                         print(f"[DEBUG] Nhận diện được ({WHISPER_MODE.capitalize()}): \"{original_text}\"")
                         vi_text = translate_text(original_text)
@@ -1169,8 +1375,6 @@ def speech_worker():
                 except Exception as err:
                     err_msg = str(err)
                     print(f"[ERROR] Lỗi transcribe ({WHISPER_MODE}): {err_msg}")
-                    if WHISPER_MODE == "online":
-                        subtitle_queue.put(f"[SYSTEM]\nSERVER_ERROR:{err_msg}")
             except Exception as e:
                 print(e)
 
@@ -6545,13 +6749,19 @@ class Overlay(QWidget):
         super().keyPressEvent(event)
 
     def toggle_listening(self):
-        global IS_LISTENING
+        global IS_LISTENING, WS_STT_CLIENT
         IS_LISTENING = not IS_LISTENING
         
         if IS_LISTENING:
             self.set_status_state("listening")
+            if WHISPER_MODE == "online" and API_URL:
+                WS_STT_CLIENT = WebSocketSTTClient(API_URL, SOURCE_LANG, subtitle_queue)
+                WS_STT_CLIENT.start()
         else:
             self.set_status_state("idle")
+            if WS_STT_CLIENT:
+                WS_STT_CLIENT.stop()
+                WS_STT_CLIENT = None
             
         self.apply_theme_and_font()
         self.update_log_display()
@@ -6722,8 +6932,13 @@ class Overlay(QWidget):
         def run_check():
             import requests
             try:
-                r = requests.get(API_URL.rsplit('/', 1)[0], timeout=3)
-                is_ok = r.status_code < 500
+                # Chuyển đổi wss/ws sang https/http để requests có thể gửi ping kiểm tra kết nối
+                # Đồng thời bỏ đuôi /ws để ping thẳng vào cổng chào root của server (tránh lỗi 404 GET /ws)
+                http_url = API_URL.replace("wss://", "https://").replace("ws://", "http://")
+                if http_url.endswith("/ws"):
+                    http_url = http_url.rsplit("/ws", 1)[0]
+                r = requests.get(http_url, timeout=3)
+                is_ok = (r.status_code == 200)
             except Exception:
                 is_ok = False
                 
@@ -7101,8 +7316,8 @@ class Overlay(QWidget):
         if "Song ngữ" in mode:
             non_system_subs = [(en, vi) for en, vi in self.history if en != "[SYSTEM]"]
             if is_one_line:
-                combined_en_parts = [item[0] for item in non_system_subs]
-                combined_vi_parts = [item[1] for item in non_system_subs]
+                combined_en_parts = [format_text_with_speaker(item[0]) for item in non_system_subs]
+                combined_vi_parts = [format_text_with_speaker(item[1]) for item in non_system_subs]
                 if self.interim_subtitle:
                     en_draft, vi_draft = self.interim_subtitle
                     if en_draft:
@@ -7140,9 +7355,9 @@ class Overlay(QWidget):
                         html_content += f"""
                         <div style="margin-bottom: 8px;">
                             {self.get_flag_html(src_code)} 
-                            <span style="{en_style}">{en}</span><br/>
+                            <span style="{en_style}">{format_text_with_speaker(en)}</span><br/>
                             {self.get_flag_html(tgt_code)} 
-                            <span style="{vi_style}">{vi}</span>
+                            <span style="{vi_style}">{format_text_with_speaker(vi)}</span>
                         </div>
                         """
                     if idx < len(self.history) - 1:
@@ -7172,7 +7387,7 @@ class Overlay(QWidget):
                     if en_draft:
                         non_system_subs.append(f"<i><span style='color: {draft_en_color}; font-family: {FONT_FAMILY_SRC};'>{en_draft}</span></i>")
                 if non_system_subs:
-                    combined_en = " ".join(non_system_subs)
+                    combined_en = " ".join(format_text_with_speaker(en) for en in non_system_subs)
                     en_style = f"color: {latest_src_color}; font-size: {FONT_SIZE_SRC}px; font-weight: bold; font-family: {FONT_FAMILY_SRC};"
                     html_content = f"""
                     <div style="padding: 10px; min-height: 50px;">
@@ -7194,7 +7409,7 @@ class Overlay(QWidget):
                         html_content += f"""
                         <div style="margin-bottom: 8px;">
                             {self.get_flag_html(src_code)} 
-                            <span style="{en_style}">{en}</span>
+                            <span style="{en_style}">{format_text_with_speaker(en)}</span>
                         </div>
                         """
                     if idx < len(self.history) - 1:
@@ -7221,7 +7436,7 @@ class Overlay(QWidget):
                     if vi_draft:
                         non_system_subs.append(f"<i><span style='color: {draft_vi_color}; font-family: {FONT_FAMILY_TGT};'>{vi_draft}</span></i>")
                 if non_system_subs:
-                    combined_vi = " ".join(non_system_subs)
+                    combined_vi = " ".join(format_text_with_speaker(vi) for vi in non_system_subs)
                     vi_style = f"color: {latest_tgt_color}; font-size: {FONT_SIZE_TGT}px; font-weight: bold; font-family: {FONT_FAMILY_TGT};"
                     html_content = f"""
                     <div style="padding: 10px; min-height: 50px;">
@@ -7243,7 +7458,7 @@ class Overlay(QWidget):
                         html_content += f"""
                         <div style="margin-bottom: 8px;">
                             {self.get_flag_html(tgt_code)} 
-                            <span style="{vi_style}">{vi}</span>
+                            <span style="{vi_style}">{format_text_with_speaker(vi)}</span>
                         </div>
                         """
                     if idx < len(self.history) - 1:

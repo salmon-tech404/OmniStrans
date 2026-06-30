@@ -20,7 +20,7 @@ echo Cap nhat pip...
 python -m pip install --upgrade pip
 echo.
 echo Dang cai dat cac thu vien can thiet...
-pip install faster-whisper sounddevice numpy deep-translator PyQt6 pywin32 pyaudiowpatch pycryptodomex gemini-webapi pyinstaller yt-dlp imageio-ffmpeg easyocr
+pip install faster-whisper sounddevice numpy deep-translator PyQt6 pywin32 pyaudiowpatch pycryptodomex gemini-webapi pyinstaller yt-dlp imageio-ffmpeg easyocr websockets
 echo.
 echo ====================================================
 echo   CAI DAT HOAN TAT!
