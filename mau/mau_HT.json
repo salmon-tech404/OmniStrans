@@ -1,0 +1,157 @@
+{
+    "subject": {
+        "description": "A high-fidelity portrait of a young Vietnamese woman from An Giang in the Mekong Delta, with authentic Southern Vietnamese features, soft see-through bangs, warm smile, natural complexion, and the exact same facial identity as the reference photo. Looking directly at the camera. Photorealistic, ultra-realistic skin details, natural daylight, cinematic depth of field, professional DSLR photography, 8K quality.",
+        "mirror_rules": "None.",
+        "age": "Early 20s",
+        "expression": {
+            "eyes": {
+                "look": "Direct and engaging eye contact",
+                "energy": "Soft, calm, and friendly",
+                "direction": "Looking straight into the camera lens"
+            },
+            "mouth": {
+                "position": "Closed, slightly upturned lips",
+                "energy": "Subtle, pleasant, and natural smile"
+            },
+            "overall": "A calm, gentle, and welcoming facial expression directed at the camera"
+        },
+        "face": {
+            "preserve_original": "True",
+            "makeup": "Minimal, fresh-faced, natural everyday look"
+        },
+        "facial_features": {
+            "face_shape": "Oval face with soft V-shaped jawline",
+            "eyes": "Medium almond-shaped brown eyes",
+            "eyebrows": "Straight eyebrows with a gentle arch",
+            "nose": "Small straight nose",
+            "lips": "Medium-full natural lips",
+            "skin": "Fair East Asian skin tone"
+        }
+    },
+    "identity_preservation": {
+        "priority": "maximum",
+        "instructions": [
+            "Use the uploaded reference image as the primary facial reference",
+            "Preserve the exact facial identity from the reference image",
+            "Maintain original facial proportions",
+            "Maintain original eye shape and spacing",
+            "Maintain original nose shape",
+            "Maintain original lip shape",
+            "Maintain original jawline and chin shape",
+            "Do not beautify, modify, or reinterpret facial features",
+            "Keep eyes open"
+        ]
+    },
+    "hair": {
+        "color": "Black",
+        "style": "Long, wavy dark hair worn naturally loose, featuring soft, wispy see-through bangs framing her forehead, no headband or hair accessories",
+        "effect": "Voluminous, loose waves draping over her shoulders with a soft, natural texture"
+    },
+    "body": {
+        "frame": "Slim, petite, well-proportioned East Asian female build",
+        "waist": "Slender, defined waistline with shirt cleanly tucked in",
+        "chest": "Natural, modest proportions",
+        "legs": "Slender, straight bare legs showing below the hem of denim shorts",
+        "skin": {
+            "visible_areas": "Face, neck, arms, and legs",
+            "tone": "Fair, natural ivory skin tone",
+            "texture": "RAW photo, candid photography, natural skin texture, unretouched skin, realistic pores, high dynamic range, photorealistic, authentic indoor lifestyle photography",
+            "lighting_effect": "Even, natural daytime illumination accentuating smooth skin texture without heavy, harsh shadows"
+        }
+    },
+    "pose": {
+        "position": "Seated on a bed, looking into a large mirror (implicit selfie)",
+        "base": "Relaxed, central focus",
+        "overall": "A casual, intimate selfie pose, with the left arm extending to hold the phone (implied by the shot frame and selfie-style perspective)"
+    },
+    "clothing": {
+        "top": {
+            "type": "Casual button-up shirt",
+            "color": "Champagne or light beige",
+            "details": "Lapel collar, a small pocket, and a button visible",
+            "effect": "Flowy, lustrous, smooth texture"
+        },
+        "bottom": {
+            "type": "Pajama bottoms (implied but not visible)",
+            "color": "Not visible",
+            "details": "Not visible"
+        }
+    },
+    "accessories": {
+        "prop": "Mirror (the entire scene is a mirror selfie)"
+    },
+    "photography": {
+        "camera_style": "High-resolution digital photography (mirror selfie style)",
+        "angle": "Eye-level, slightly angled from the subject's left",
+        "shot_type": "Close-up / Medium shot (mirror selfie)",
+        "aspect_ratio": "4:5 (original image ratio)",
+        "texture": "Clean, sharp detail on the subject, soft background blur",
+        "lighting": "Natural daylight from a nearby window, diffused and soft",
+        "depth_of_field": "Shallow depth of field; sharp focus on the subject, blurred background"
+    },
+    "background": {
+        "setting": "A modern, well-kept bedroom",
+        "wall_color": "Neutral beige and dark gray accents",
+        "elements": [
+            "Unmade bed with white rumpled linen",
+            "Pillows",
+            "A dark gray headboard",
+            "A bright window with a sheer curtain",
+            "The edge of a white wall and window frame"
+        ],
+        "atmosphere": "Quiet, relaxed, cozy morning",
+        "lighting": "Soft natural daylight"
+    },
+    "the_vibe": {
+        "energy": "Calm, relaxed, quiet, effortless",
+        "mood": "Natural, serene",
+        "aesthetic": "Clean, modern, minimal, natural beauty",
+        "authenticity": "High, candid, natural, slice-of-life",
+        "intimacy": "Standard",
+        "story": "A quiet morning moment; taking a casual selfie before starting the day.",
+        "caption_energy": "Quiet mornings... #lazyday #wokeuplikethis"
+    },
+    "constraints": {
+        "must_keep": [
+            "Subject's facial identity",
+            "The specific short brown bob hairstyle",
+            "The champagne silk pajama top with its details",
+            "The bedroom setting with unmade bed and daylight"
+        ],
+        "avoid": [
+            "Changing the subject's gender or identity",
+            "Heavy, unnatural makeup",
+            "Major changes to the clothing (must remain champagne silk pajamas)",
+            "A chaotic or overly formal background",
+            "Tattoos, body art, or skin markings on any part of the body",
+            "Including any visible text, logos, brands, signs, watermarks, stamps, or writing on the clothes, background, or body"
+        ]
+    },
+    "negative_prompt": [
+        "bad face",
+        "distorted face",
+        "ugly face",
+        "clown makeup",
+        "overly heavily makeup",
+        "different person",
+        "wrong hairstyle",
+        "bad hands",
+        "extra limbs",
+        "blurry",
+        "low quality",
+        "watermark",
+        "text",
+        "logo",
+        "brand label",
+        "tag",
+        "writing",
+        "letters",
+        "sign",
+        "out of frame",
+        "ugly environment",
+        "tattoos",
+        "tattoo",
+        "body art",
+        "inked skin"
+    ]
+}

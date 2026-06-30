@@ -1,0 +1,13 @@
+venv
+profiles
+models
+dist
+build
+main.spec
+*.pyc
+downloads
+ffmpeg.exe
+yt-dlp.exe
+ffprobe.exe
+__pycache__
+settings.json
